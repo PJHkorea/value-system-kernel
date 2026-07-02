@@ -10,45 +10,26 @@
  * ⚠️ GPU KERNEL DEPLOYMENT & HARDWARE INTEGRATION GUIDE (GPU 커널 배포 및 하드웨어 통합 지침)
  * ============================================================================
  * 1. 부동소수점 하드웨어 규격 / Floating-Point Hardware Specification
- *    - [KR] 본 커널은 GPU 내부의 32비트 단정밀도 부동소수점(float) 연산 유닛이 IEEE 754 규격을
- *           따름을 강력히 전제합니다. 비표준 FP 형식을 강제하는 일부 특수 가속 하드웨어에서는 포팅이 불가합니다.
- *    - [EN] This kernel strictly assumes that the 32-bit single-precision floating-point (float) execution units
- *           inside the GPU adhere to the IEEE 754 standard. Porting is impossible in certain specialized hardware
- *           accelerators enforcing non-standard FP formats.
+ *    - [KR] IEEE 754 준수하는 32비트 단정밀도(float) 연산 유닛 전제.
+ *    - [EN] Strictly assumes IEEE 754 compliant 32-bit single-precision (float) units.
  * 
  * 2. NVCC 컴파일러 최적화 플래그 주의 / NVCC Compiler Optimization Flag Restrictions
- *    - [KR] 컴파일 시 `--use_fast_math` 플래그를 절대 활성화하지 마십시오.
- *    - [KR] 해당 플래그는 NVCC가 NaN/Inf 신호가 절대 발생하지 않는다고 가정하여 하드웨어 수학 함수를
- *           근사치 연산으로 강제 치환(도살)하므로, 커널 내부의 비트 가드 분기 회로가 증발할 수 있습니다.
- *    - [KR] 안전한 디바이스 빌드를 위해 최적화 옵션은 `-O3` 단독 사용을 강력히 권장합니다.
- *    - [EN] NEVER enable the `--use_fast_math` flag during NVCC compilation.
- *    - [EN] This flag forces NVCC to assume NaN/Inf signals will never occur, arbitrarily replacing mathematical
- *           functions with hardware approximation intrinsics, which completely eradicates the internal bitmask guards.
- *    - [EN] For a safe and deterministic device build, using the `-O3` flag alone is highly recommended.
+ *    - [KR] `--use_fast_math` 사용 금지 (비트 가드 증발 방지). `-O3` 권장.
+ *    - [EN] DO NOT use `--use_fast_math` (prevents bit guard evaporation). Use `-O3`.
  * 
  * 3. 워프 발산 0% 및 글로벌 메모리 병합 / Zero Warp Divergence & Global Memory Coalescing
- *    - [KR] 본 커널은 블록 경계선 외부 스레드의 오동작을 막기 위한 `if (idx < vector_size)` 조건문마저
- *           완전히 도살하고, 64비트 주소 경계선 비트 마스크와 멱등성 덮어쓰기 메커니즘을 적용했습니다.
- *    - [KR] 이로 인해 모든 스레드가 단 한 걸음의 갈림길 없이 동기화(Lockstep)되어 관통하므로 워프 발산 페널티가 0%입니다.
- *    - [KR] 글로벌 메모리 포인터 접근 시 병합(Coalescing) 효율을 극대화하기 위해 `__restrict__` 속성을 적용했습니다.
- *    - [EN] This kernel completely purges even the final boundary check conditional `if (idx < vector_size)`,
- *           applying a 64-bit boundary address mask combined with an idempotent overwrite mechanism.
- *    - [EN] Consequently, all threads execute in perfect lockstep without a single branch, ensuring exactly 0% warp divergence penalty.
- *    - [EN] The `__restrict__` qualifier is strictly leveraged to maximize global memory transaction coalescing efficiency.
+ *    - [KR] `if (idx < vector_size)` 제거, 64비트 주소 비트 마스크 및 멱등성 덮어쓰기 적용.
+ *    - [EN] Removed `if (idx < vector_size)`, used 64-bit address bit mask and idempotent overwrite.
  * 
  * 4. 그리드 및 블록 레이아웃 구성 / Grid and Block Layout Configuration
- *    - [KR] 하드웨어 스케줄러(GigaThread Engine)의 스트리밍 멀티프로세서(SM) 가동률을 극대화하기 위해,
- *           블록 크기(Block Dimension)는 오천성 배수인 128, 256, 512 스레드 설정을 권장합니다.
- *    - [EN] To maximize the Streaming Multiprocessor (SM) occupancy of the hardware scheduler (GigaThread Engine),
- *           it is highly recommended to configure the Block Dimension to warp-aligned sizes such as 128, 256, or 512 threads.
+ *    - [KR] SM 가동률 최적화를 위해 블록 크기 128, 256, 512 설정 권장.
+ *    - [EN] Recommended block size of 128, 256, or 512 to optimize SM occupancy.
  * 
- * 5. 디바이스 고유 비트 변환 함수 / Native Device Bit Reinterpretation Intrinsics
- *    - [KR] GPU 디바이스 파이프라인 내부에서의 안전한 비트 제어를 위해 C++ 표준 `std::bit_cast` 대신
- *           CUDA 고유 인트린직 함수인 `__float_as_int()` 및 `__int_as_float()`를 강제 매핑했습니다.
- *    - [KR] 이를 통해 부동소수점 레지스터와 정수 레지스터 간의 물리적 이동 없이 비트 가치관 스위칭이 수행됩니다.
- *    - [EN] For secure bit manipulation inside the GPU device pipeline, C++ standard `std::bit_cast` is substituted
- *           with native CUDA intrinsics: `__float_as_int()` and `__int_as_float()`.
- *    - [EN] This forces bitwise value switching directly within register files without introducing hardware move overhead.
+ * 5. 디바이스 고유 인트린직 매핑 / Native Device Intrinsics & FMA Acceleration
+ *    - [KR] 레지스터 무이동 스위칭을 위해 `__float_as_int()` 및 `__int_as_float()` 인트린직 사용.
+ *    - [KR] 오버플로우 방지 및 융합 곱하산을 위해 `__fmaf_rn()` 활용.
+ *    - [EN] Uses `__float_as_int()` / `__int_as_float()` for zero-move register switching.
+ *    - [EN] Employs `__fmaf_rn()` for overflow prevention and fused multiply-add.
  * ============================================================================
  */
 
@@ -82,7 +63,6 @@
 // [KR] GPU 메모리 제어기 단에서 포인터 간 메모리 앨리어싱(중첩)을 제거하여 글로벌 메모리 병합 효율 극대화
 // [EN] Eliminates pointer memory aliasing at the GPU memory controller level to maximize global memory coalescing
 #define SPINAL_CUDA_RESTRICT __restrict__
-
 
 // ============================================================================
 // ⚙️ STATIC VALUE SYSTEM CONFIGURATION (정적 가치관 매트릭스 설정)
@@ -129,7 +109,6 @@ __global__ void value_system_pure_branchless_kernel(
     bool is_exhausted
 ) {
 
-
     // ============================================================================
     // 🎛️ 64-BIT HARDWARE ADDRESS INDEXING & BOUNDARY PROTECTION (주소 계산 및 경계 보호)
     // ============================================================================
@@ -149,8 +128,8 @@ __global__ void value_system_pure_branchless_kernel(
     // [KR] GPU 메모리 일괄 병합 로드 (Coalesced Memory Read 연산 활성화)
     // [EN] Coalesced memory execution activated for global memory load operations
     float raw_human_signal = target_vector_ptr[safe_idx];
-    
-    // ============================================================================
+
+       // ============================================================================
     // 🛡️ NaN FILTER ── NATIVE DEVICE INTRINSIC ISOLATION (NaN 필터 ── 디바이스 고유 격리)
     // ============================================================================
     // [KR] std::bit_cast를 도살하고 레지스터 레벨의 이동 없는 고유 인트린직 __float_as_int 매핑
@@ -166,7 +145,6 @@ __global__ void value_system_pure_branchless_kernel(
     // [EN] If NaN signal, vaporizes the pattern instantly to baseline equilibrium (0.0f) bit layout via bitwise AND
     raw_bits = raw_bits & (~nan_mask);
     float human_signal = __int_as_float(raw_bits);
-
 
     // ============================================================================
     // 🔄 DIFFERENCE CALCULATION & INF GUARD (수치 차이 연산 및 inf 가드 ── MUX 회로 모사)
@@ -185,7 +163,7 @@ __global__ void value_system_pure_branchless_kernel(
     uint32_t diff_bits = (abs_diff_bits & (~inf_mask)) | (__float_as_int(BITWISE_MAX_DIFF_LIMIT) & inf_mask);
     float diff = __int_as_float(diff_bits);
 
-    // ============================================================================
+      // ============================================================================
     // ⚡ VALUE STATE CALCULATION ── HARDWARE GATE VOLTAGE SIMULATION (가치관 플래그 연산)
     // ============================================================================
     // [KR] 논리 연산자(&&, ||)를 전면 숙청하고 순수 하드웨어 비트 연산(&, |) 게이트로 처리
@@ -199,7 +177,6 @@ __global__ void value_system_pure_branchless_kernel(
     // [note] 커널의 단일 스레드 로컬 트리거 버퍼에 누적 연산 진행
     uint32_t local_failsafe_trigger = (cond_silence | cond_honesty);
 
-
     // ============================================================================
     // 🔲 MUTUALLY EXCLUSIVE ARITHMETIC MASKS (상호 배제 정수 마스크 구축)
     // ============================================================================
@@ -211,7 +188,10 @@ __global__ void value_system_pure_branchless_kernel(
     // [KR] 후보 출력 벡터 사전 계산 / [EN] Pre-calculating Candidate Output Vectors
     float out_silence = REJECT_OUTPUT_SIGNAL;
     float out_honesty = FAILSAFE_NOTCH_SIGNAL;
-    float out_absorb  = (human_signal + factual_truth) * 0.5f;
+    
+    // 💡 [하드웨어 최적화]: 극단적인 대형 수치 유입 시 중간 가산 오버플로우(Inf 발생)를 원천 차단
+    // 엔비디아 GPU 연산 장치의 FMA(Fused Multiply-Add) 기법을 사용하여 레지스터 이동 오버헤드 없이 1클럭으로 관통합니다.
+    float out_absorb  = __fmaf_rn(human_signal, 0.5f, factual_truth * 0.5f);
 
     // ============================================================================
     // 🧠 COMPILE-TIME CONDITIONAL EXPULSION (컴파일 타임 삼항 연산자 비트 전면 치환)
@@ -231,7 +211,7 @@ __global__ void value_system_pure_branchless_kernel(
 
     float local_element = __int_as_float(res_bits);
 
-    // ============================================================================
+       // ============================================================================
     // 🎚️ 32-BIT MEMORY BOUNDARY SYNCHRONIZATION (32비트 쓰기 마스크 동기화 및 덮어쓰기)
     // ============================================================================
     // [KR] 64비트 주소 경계 마스크를 하위 32비트로 안전 다운캐스팅하여 컴파일러 경고 원천 차단
@@ -265,7 +245,7 @@ extern "C" bool launch_value_system_kernel(
     float factual_truth, 
     float emotion_weight,
     bool is_exhausted,
-    cudaStream_t stream = 0
+    cudaStream_t stream
 ) {
     if (vector_size == 0) return true;
 
@@ -287,4 +267,5 @@ extern "C" bool launch_value_system_kernel(
     cudaError_t err = cudaGetLastError();
     return (err == cudaSuccess);
 }
+
 
