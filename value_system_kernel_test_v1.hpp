@@ -20,39 +20,38 @@
  *    - [KR] 컴파일 시 `-ffast-math` 또는 `-Ofast` 플래그를 절대 활성화하지 마십시오.
  *    - [KR] 해당 플래그는 컴파일러가 NaN/Inf 신호가 절대 발생하지 않는다고 가정하고 코드를 임의로 
  *           최적화(도살)하므로, 상단의 NaN 필터 및 inf 가드 비트 마스크 로직이 증발할 수 있습니다.
- *    - [KR] 안전한 빌드를 위해 최적화는 `-O3` 단독 사용을 권장합니다.
+ *    - [KR] 본 헤더 내부에는 GCC/Clang 컴파일러 대상 강제 최적화 프라그마 가드(#pragma GCC push_options)가
+ *           내장되어 있으나, 완벽한 무결성을 보장하기 위해 빌드 스크립트에서도 `-O3` 단독 사용을 권장합니다.
  *    - [EN] NEVER enable `-ffast-math` or `-Ofast` flags during compilation.
  *    - [EN] These flags force the compiler to assume that NaN/Inf signals will never occur, allowing it
  *           to arbitrarily eliminate the NaN filter and inf guard bitmask logic via aggressive optimization.
- *    - [EN] For a safe and secure build, using the `-O3` flag alone is highly recommended.
+ *    - [EN] Although native compiler pragma guards (#pragma GCC push_options) are embedded to suppress
+ *           unsafe math assumptions, using the `-O3` flag alone in your build script is highly recommended.
  * 
- * 3. SIMD 자동 벡터화 및 포인터 격리 / SIMD Auto-Vectorization & Pointer Isolation
+ * 3. SIMD 자동 벡터화 및 부동소수점 융합 연산 (FMA) / SIMD Auto-Vectorization & FMA
  *    - [KR] 본 코드는 점프(Branch)가 없는 완전 선형 구조이므로 루프 인롤링 및 SIMD 벡터화에 최적화되어 있습니다.
- *    - [KR] 컴파일러에게 포인터 간 메모리 중첩이 없음을 보장하여 파이프라인 병렬성을 극대화하기 위해,
- *           MSVC 환경에서는 `__restrict`, GCC/Clang 환경에서는 `__restrict__` 속성을 적극 활용하십시오.
  *    - [KR] 가속 명령어 세트 플래그를 반드시 활성화하십시오. (예: x86-64: `-mavx2` / `-mavx512f`, ARM: `-march=armv8-a+simd`)
- *    - [EN] This code features a completely linear structure with zero branching, highly optimized for
- *           loop unrolling and SIMD auto-vectorization.
- *    - [EN] To maximize pipeline parallelism by guaranteeing the compiler that there is no memory overlap
- *           between pointers, actively leverage `__restrict` (MSVC) or `__restrict__` (GCC/Clang).
- *    - [EN] Ensure that target hardware acceleration flags are explicitly enabled.
- *           (e.g., x86-64: `-mavx2` / `-mavx512f`, ARM: `-march=armv8-a+simd`)
+ *    - [KR] 하드웨어 가속 플래그가 활성화되면 중간 가산 과정의 임시 오버플로우(Inf 발생)를 원천 박멸하기 위해 
+ *           내부 연산부에서 하드웨어 FMA (`std::fma`) 명령어가 1대1 매핑되어 작동합니다.
+ *    - [EN] This code features a completely linear structure with zero branching, highly optimized for SIMD.
+ *    - [EN] Ensure that target hardware acceleration flags are explicitly enabled (e.g., `-mavx2`, `-mavx512f`).
+ *    - [EN] When hardware acceleration is enabled, hardware FMA (`std::fma`) is mapped natively to completely 
+ *           prevent temporary intermediate floating-point overflow (transient Inf generation).
  * 
  * 4. 메모리 정렬 / Memory Alignment
  *    - [KR] `target_vector_ptr` 버퍼는 SIMD 정렬 스트리밍 연산(예: `_mm256_load_ps`) 유도를 위해
  *           가능하면 32바이트(AVX2) 또는 64바이트(AVX512) 경계로 정렬되어 유입되어야 최적의 성능을 냅니다.
- *    - [EN] To induce optimal SIMD aligned streaming operations (e.g., `_mm256_load_ps`), the input
- *           `target_vector_ptr` buffer should ideally be aligned on 32-byte (AVX2) or 64-byte (AVX512) boundaries.
+ *    - [EN] To induce optimal SIMD aligned streaming operations, the input `target_vector_ptr` buffer 
+ *           should ideally be aligned on 32-byte (AVX2) or 64-byte (AVX512) boundaries.
  * 
  * 5. 이기종 컴퓨팅 환경(CUDA/OpenCL) 포팅 가이드 / Heterogeneous Computing (CUDA/OpenCL) Porting Guide
  *    - [KR] 본 함수를 GPU 커널 및 CUDA 디바이스 함수(`__device__`)로 포팅할 경우, `std::bit_cast`는
  *           CUDA 디바이스 표준 컴파일러에 따라 사용이 제한될 수 있습니다.
- *    - [KR] CUDA 환경 이식 시에는 `__float_as_int()` 및 `__int_as_float()` 고유 함수(Intrinsic)로
- *           치환하여 적용해야 하드웨어 레벨의 비트 멀티플렉싱 성능이 그대로 유지됩니다.
- *    - [EN] When porting this function to GPU kernels or CUDA device functions (`__device__`), the use of
- *           `std::bit_cast` may be restricted depending on the specific CUDA device compiler version.
- *    - [EN] For CUDA environments, substitute with hardware intrinsics such as `__float_as_int()` and
- *           `__int_as_float()` to preserve the low-level bitwise multiplexing performance natively.
+ *    - [KR] CUDA 환경 이식 시에는 대안 파일인 `value_system_kernel.cu`를 참조하여 `__float_as_int()` 및 
+ *           `__int_as_float()` 고유 인트린직 함수와 하드웨어 전용 FMA 인트린직(`__fmaf_rn`)을 사용하십시오.
+ *    - [EN] When porting this function to GPU kernels, `std::bit_cast` may be restricted.
+ *    - [EN] For CUDA environments, refer to `value_system_kernel.cu` and leverage hardware bit reinterpret 
+ *           intrinsics alongside device-specific native FMA intrinsics (`__fmaf_rn`).
  * ============================================================================
  */
 
@@ -79,6 +78,17 @@
 // [KR] 비트 연산 수치 격리 한계치: inf 왜곡 발생 시 강제 매핑할 안전 상한 경계값
 // [EN] Bitwise Maximum Difference Limit: Safety upper bound for forced mapping upon inf distortion
 #define BITWISE_MAX_DIFF_LIMIT  999.0f 
+
+// ============================================================================
+// 🛡️ COMPILER OPTIMIZATION PRAGMA GUARD (컴파일러 최적화 도살 방지 프라그마 가드)
+// ============================================================================
+// [KR] 외부 빌드 플래그(-Ofast, -ffast-math)가 커널 내부의 NaN/Inf 비트 검출식을 제거하는 것을 원천 차단
+// [EN] Prevents external fast-math flags from eradicating the internal NaN/Inf bitmask checking logic
+#if defined(__GNUC__) || defined(__clang__)
+    #pragma GCC optimize ("O3")
+    #pragma GCC push_options
+    #pragma GCC optimize ("no-fast-math")
+#endif
 
 // ============================================================================
 // ⚡ COMPILER COMPATIBILITY BRIDGE (컴파일러 호환성 전처리 브릿지)
@@ -201,7 +211,10 @@ public:
             // [KR] 후보 출력 벡터 사전 계산 / [EN] Pre-calculating Candidate Output Vectors
             float out_silence = REJECT_OUTPUT_SIGNAL;
             float out_honesty = FAILSAFE_NOTCH_SIGNAL;
-            float out_absorb  = (human_signal + factual_truth) * 0.5f;
+            
+            // 💡 [수치해석적 고도화]: 극단적인 대형 수치 유입 시 중간 가산 오버플로우(Inf 발생)를 원천 차단
+            // 컴파일러에 의해 AVX2/AVX-512 FMA 융합 하드웨어 명령어로 1대1 치환되어 성능 저하 없이 관통합니다.
+            float out_absorb  = std::fma(human_signal, 0.5f, factual_truth * 0.5f);
 
             // ============================================================================
             // 🧠 COMPILE-TIME CONDITIONAL EXPULSION (컴파일 타임 삼항 연산자 비트 전면 치환)
@@ -224,7 +237,16 @@ public:
             target_vector_ptr[i] = std::bit_cast<float>(res_bits);
         }
 
-
         return (global_failsafe_trigger == 0U);
     }
 };
+
+// ============================================================================
+// 🛡️ COMPILER OPTIMIZATION PRAGMA RELEASE (컴파일러 최적화 전역 환경 복원)
+// ============================================================================
+// [KR] 본 커널 함수 영역 외부의 타사 엔진 빌드 옵션 간섭을 방지하기 위해 프라그마 푸시 스택 해제
+// [EN] Pops the options to prevent math assumption contamination outside this kernel file boundary
+#if defined(__GNUC__) || defined(__clang__)
+    #pragma GCC pop_options
+#endif
+
