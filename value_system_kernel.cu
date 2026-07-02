@@ -15,7 +15,9 @@
  * 
  * 2. NVCC 컴파일러 최적화 플래그 주의 / NVCC Compiler Optimization Flag Restrictions
  *    - [KR] `--use_fast_math` 사용 금지 (비트 가드 증발 방지). `-O3` 권장.
+ *    - [KR] 본 소스 파일 최상단에 빌드 옵션 무단 유입을 정밀 검증하는 매크로 방화벽(#error)이 내장되어 있습니다.
  *    - [EN] DO NOT use `--use_fast_math` (prevents bit guard evaporation). Use `-O3`.
+ *    - [EN] A compile-time protection macro firewall (#error) is explicitly embedded to halt unsafe builds.
  * 
  * 3. 워프 발산 0% 및 글로벌 메모리 병합 / Zero Warp Divergence & Global Memory Coalescing
  *    - [KR] `if (idx < vector_size)` 제거, 64비트 주소 비트 마스크 및 멱등성 덮어쓰기 적용.
@@ -33,10 +35,20 @@
  * ============================================================================
  */
 
-
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <stdint.h>
+
+// ============================================================================
+// 🛡️ NVCC FAST-MATH COMPILATION PROTECTION GUARD (컴파일 타임 가드 회로 증발 방지 보호벽)
+// ============================================================================
+// [KR] 빌드 스크립트 오류나 외부 주입으로 --use_fast_math 플래그 유입 시 컴파일 단계에서 강제 에러 처리
+// [EN] Forces a compile-time error to stop the build if --use_fast_math is mistakenly injected
+#if defined(__CUDACC__)
+    #if defined(__CUDA_FAST_MATH__)
+        #error "⚠ [CRITICAL FAILURE] Do NOT compile this kernel with '--use_fast_math' or '-use_fast_math'. Internal IEEE 754 NaN/Inf bitmask guards will completely evaporate in hardware!"
+    #endif
+#endif
 
 // ============================================================================
 // 🎯 SYSTEM OPERATING SIGNAL REGISTERS (시스템 제어 수치 신호 레지스터)
@@ -63,6 +75,7 @@
 // [KR] GPU 메모리 제어기 단에서 포인터 간 메모리 앨리어싱(중첩)을 제거하여 글로벌 메모리 병합 효율 극대화
 // [EN] Eliminates pointer memory aliasing at the GPU memory controller level to maximize global memory coalescing
 #define SPINAL_CUDA_RESTRICT __restrict__
+
 
 // ============================================================================
 // ⚙️ STATIC VALUE SYSTEM CONFIGURATION (정적 가치관 매트릭스 설정)
@@ -109,7 +122,7 @@ __global__ void value_system_pure_branchless_kernel(
     bool is_exhausted
 ) {
 
-    // ============================================================================
+       // ============================================================================
     // 🎛️ 64-BIT HARDWARE ADDRESS INDEXING & BOUNDARY PROTECTION (주소 계산 및 경계 보호)
     // ============================================================================
     // [KR] 64비트 하드웨어 글로벌 주소 고유 인덱스 계산 (그리드 물리 파이프라인 매핑)
@@ -129,7 +142,7 @@ __global__ void value_system_pure_branchless_kernel(
     // [EN] Coalesced memory execution activated for global memory load operations
     float raw_human_signal = target_vector_ptr[safe_idx];
 
-       // ============================================================================
+    // ============================================================================
     // 🛡️ NaN FILTER ── NATIVE DEVICE INTRINSIC ISOLATION (NaN 필터 ── 디바이스 고유 격리)
     // ============================================================================
     // [KR] std::bit_cast를 도살하고 레지스터 레벨의 이동 없는 고유 인트린직 __float_as_int 매핑
@@ -146,7 +159,7 @@ __global__ void value_system_pure_branchless_kernel(
     raw_bits = raw_bits & (~nan_mask);
     float human_signal = __int_as_float(raw_bits);
 
-    // ============================================================================
+       // ============================================================================
     // 🔄 DIFFERENCE CALCULATION & INF GUARD (수치 차이 연산 및 inf 가드 ── MUX 회로 모사)
     // ============================================================================
     float raw_diff = human_signal - factual_truth;
@@ -163,7 +176,7 @@ __global__ void value_system_pure_branchless_kernel(
     uint32_t diff_bits = (abs_diff_bits & (~inf_mask)) | (__float_as_int(BITWISE_MAX_DIFF_LIMIT) & inf_mask);
     float diff = __int_as_float(diff_bits);
 
-      // ============================================================================
+    // ============================================================================
     // ⚡ VALUE STATE CALCULATION ── HARDWARE GATE VOLTAGE SIMULATION (가치관 플래그 연산)
     // ============================================================================
     // [KR] 논리 연산자(&&, ||)를 전면 숙청하고 순수 하드웨어 비트 연산(&, |) 게이트로 처리
@@ -177,7 +190,7 @@ __global__ void value_system_pure_branchless_kernel(
     // [note] 커널의 단일 스레드 로컬 트리거 버퍼에 누적 연산 진행
     uint32_t local_failsafe_trigger = (cond_silence | cond_honesty);
 
-    // ============================================================================
+       // ============================================================================
     // 🔲 MUTUALLY EXCLUSIVE ARITHMETIC MASKS (상호 배제 정수 마스크 구축)
     // ============================================================================
     uint32_t mask_silence = -static_cast<int32_t>(cond_silence);
@@ -211,7 +224,7 @@ __global__ void value_system_pure_branchless_kernel(
 
     float local_element = __int_as_float(res_bits);
 
-       // ============================================================================
+        // ============================================================================
     // 🎚️ 32-BIT MEMORY BOUNDARY SYNCHRONIZATION (32비트 쓰기 마스크 동기화 및 덮어쓰기)
     // ============================================================================
     // [KR] 64비트 주소 경계 마스크를 하위 32비트로 안전 다운캐스팅하여 컴파일러 경고 원천 차단
@@ -267,5 +280,4 @@ extern "C" bool launch_value_system_kernel(
     cudaError_t err = cudaGetLastError();
     return (err == cudaSuccess);
 }
-
 
