@@ -1,3 +1,11 @@
+# 🔬 value-system-kernel V2
+
+> 🇰🇷 **본 프로젝트는 미래형 가속기 기반 가치관 가드레일 엔진의 아키텍처 방향성을 정립하기 위한 독창적인 청사진(Blueprint) 개념 실증 모델입니다.**
+>
+> 🇺🇸 **This project serves as an original blueprint concept, engineered specifically to establish and validate the architectural direction for next-generation, accelerator-native value guardrail engines.**
+
+---
+
 # 💡 패러다임 시프트 (Paradigm Shift)
 
 ## 🇰🇷 KR
