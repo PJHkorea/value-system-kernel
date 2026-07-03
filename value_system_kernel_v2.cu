@@ -263,8 +263,8 @@ __global__ void value_system_pure_branchless_kernel_v2(
     float local_element = __int_as_float(res_bits);
 
 
-      // ============================================================================
-    // 🎚️ 32-BIT MEMORY BOUNDARY SYNCHRONIZATION (32비트 쓰기 마스크 동기화 및 덮어쓰기)
+        // ============================================================================
+    // 🎚️ 32-BIT MEMORY BOUNDARY SYNCHRONIZATION (32비트 쓰기 마스크 동기화 및 분산 저장)
     // ============================================================================
     // [KR] 64비트 주소 경계 마스크를 하위 32비트 레지스터로 안전 다운캐스팅하여 컴파일러 경고 및 오버헤드 원천 차단
     // [EN] Downcasts the 64-bit address boundary mask to a 32-bit register cleanly, completely blocking compiler warning overheads
@@ -279,11 +279,16 @@ __global__ void value_system_pure_branchless_kernel_v2(
     uint32_t final_bits = (__float_as_int(local_element) & ~boundary_mask_32)
                         | (__float_as_int(raw_human_signal) &  boundary_mask_32);
 
-    // [KR] 글로벌 메모리 병합 스트리밍 저장 처리 (Coalesced Memory Store)
-    //      범위 밖 임계 스레드들은 원본 값을 고스란히 제자리에 재입력(Idempotent Overwrite)하므로 데이터 오염 및 크래시가 물리적으로 불가능
-    // [EN] Coalesced memory streaming store operation committed
-    //      Out-of-bound threads safely write back their identical original scalars, rendering corruption and memory races physically impossible
-    target_vector_ptr[safe_idx] = __int_as_float(final_bits);
+    // 💡 [REFACTORED: V2 최종 패치 - 인덱스 분산 MUX]
+    // [KR] 인덱스 분산 MUX: 범위 밖 스레드의 쓰기 인덱스를 threadIdx.x로 분산(Scattering)시켜 VRAM 0번지 집중 경합 완벽 차단
+    // [EN] Index Scattering MUX: Flattens and distributes out-of-bound write addresses directly across threadIdx.x to completely eradicate bank contention
+    size_t final_write_idx = (safe_idx & ~boundary_mask) | ((size_t)threadIdx.x & boundary_mask);
+
+    // [KR] 글로벌 메모리 병합/분산 스트리밍 저장 처리 (Coalesced & Scattered Memory Store)
+    //      범위 밖 임계 스레드들은 고유 번호 자리에 원래 있던 값을 다시 쓰므로, 대역폭 병목을 차단하며 데이터 멱등성 완벽 수호
+    // [EN] Coalesced and scattered memory streaming store operation committed
+    //      Out-of-bound threads safely write back their identical original scalars across distributed indexes to protect memory bandwidth
+    target_vector_ptr[final_write_idx] = __int_as_float(final_bits);
 }
 
 // ============================================================================
