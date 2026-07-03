@@ -132,12 +132,41 @@ __global__ void value_system_pure_branchless_kernel_v2(
     float emotion_weight,
     bool is_exhausted
 ) {
-    // [KR] 64비트 글로벌 스레드 고유 인덱스 계산 (물리 가속 파이프라인 매핑)
-    // [EN] Calculates the unique 64-bit hardware global index (Mapping to execution pipeline)
-    size_t idx = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+       // ============================================================================
+    // 🎛️ 64-BIT HARDWARE ADDRESS INDEXING & BOUNDARY PROTECTION (주소 계산 및 경계 보호)
+    // ============================================================================
+    // [KR] 64비트 주소 경계선 체크용 무분기 통짜 비트 마스크 생성 (if문 전면 도살)
+    // [EN] Generates branchless solid bitmask for 64-bit address boundary validation (if-statement completely purged)
+    size_t is_out_of_bound = (size_t)(idx >= vector_size);
+    uintptr_t boundary_mask = -static_cast<intptr_t>(is_out_of_bound); 
 
-    // 1. [기존 유지] 64비트 주소 경계선 체크 및 NaN 필터 (분기 없는 비트 연산)
-    // ... [상세 비트 연산 생략 - 원본 코드 64-bit boundary & NaN Filter] ...
+    // [KR] 범위 밖의 임계 스레드는 안전하게 0번지를 참조케 하여 하드웨어 메모리 크래시(Out-of-Bounds) 원천 격리
+    // [EN] Forces out-of-bound edge threads to safely point to index 0, isolating hardware memory crashes (Out-of-Bounds) natively
+    size_t safe_idx = idx & (~boundary_mask);
+
+    // [KR] GPU 메모리 일괄 병합 로드 (Coalesced Memory Read 연산 활성화)
+    // [EN] Coalesced memory execution activated for global memory load operations
+    float raw_human_signal = target_vector_ptr[safe_idx];
+    
+    // ============================================================================
+    // 🛡️ NaN FILTER ── NATIVE DEVICE INTRINSIC ISOLATION (NaN 필터 ── 디바이스 고유 격리)
+    // ============================================================================
+    // [KR] std::bit_cast를 도살하고 레지스터 레벨의 이동 없는 고유 인트린직 __float_as_int 매핑
+    // [EN] Purges std::bit_cast and maps native intrinsic __float_as_int to prevent physical register move overhead
+    uint32_t raw_bits = __float_as_int(raw_human_signal);
+    
+    // [KR] 지수부가 전부 1이고 가수부가 0이 아닌 경우 NaN 비트 패턴 판정 (단락 평가 원천 박멸)
+    // [EN] Determines NaN bit pattern if Exponent bits are all 1 and Mantissa is non-zero (Short-circuit eradication)
+    uint32_t is_nan = (((raw_bits & 0x7F800000U) == 0x7F800000U) & ((raw_bits & 0x007FFFFFU) != 0U));
+    uint32_t nan_mask = -static_cast<int32_t>(is_nan); // [KR] 0x00000000 또는 0xFFFFFFFF 마스크 생성 [EN] Generates 0x00000000 or 0xFFFFFFFF mask
+    
+    // [KR] NaN 신호일 경우 비트 AND 연산으로 원점 준위(0.0f) 비트 패턴으로 즉각 증발 처리
+    // [EN] If NaN signal, vaporizes the pattern instantly to baseline equilibrium (0.0f) bit layout via bitwise AND
+    raw_bits = raw_bits & (~nan_mask);
+    
+    // [KR] 정제 완료된 비트를 다시 부동소수점 레지스터로 컴파일러 이동 없이 스위칭
+    // [EN] Reinterprets purified bits back to the floating-point register file with zero hardware overhead
+    float human_signal = __int_as_float(raw_bits);
 
     // ============================================================================
     // 🔄 V2 다차원 가속 스캔 & 타겟 좌표 비트 MUX 추적
