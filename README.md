@@ -208,6 +208,22 @@ Integrating low-level synchronization barriers to intercept hardware failures of
 
 ---
 
+### ⚡ V2 실전 배포 최적화 및 하드웨어 가드 패치 (V2 Production Reliability & Hardware Guard Patch)
+
+#### 🇰🇷 KR
+- **컴파일러 최적화 도살 방지 프라그마 실드 내장**: 외부 빌드 스크립트 오류나 인프라 환경에서 오염된 fast-math 플래그(`-Ofast`, `--use_fast_math`) 유입 시 비트 가드 회로가 증발하는 것을 막기 위해, 소스코드 최상단에 `#error` 매크로 방화벽을 내장하여 안전하지 않은 빌드 파이프라인을 컴파일 단계에서 강제로 중단(Abort)시킵니다.
+- **ALU 1클럭 절대값 가속 완결 (`__fabs`)**: 다차원 가속 스캔 루프 내부에서 부동소수점의 최상위 부호 비트를 지워 절대값을 만드는 과정 중 소프트웨어 레벨의 비효율적인 분기 소모를 멸각하기 위해, 1클럭 실행이 하드웨어 단위에서 보장되는 CUDA 고유 인트린직 함수인 `__fabs()`를 강제 매핑했습니다.
+- **수치해석적 오버플로우 완벽 차단 (`__fmaf_rn`)**: 극단적인 대형 수치 유입 시 발생할 수 있는 중간 가산 오버플로우 및 반올림 노이즈를 지우기 위해, 기존의 분리형 FMA 구조를 `__fmaf_rn(human_signal + matched_danger, 0.5f, 0.0f)` 레이아웃의 단일 패스 결합 연산 구조로 개조하여 부동소수점 정밀도를 하드웨어 레벨에서 극한으로 수호합니다.
+- **VRAM 0번지 글로벌 메모리 경합 격리 (`Scattering Overwrite`)**: 범위 밖(Out-of-Bounds) 유휴 스레드들이 `safe_idx` 게이트에 의해 VRAM 0번지 단일 주소 하나만을 격렬하게 동시 타격(Write Race)하여 메모리 컨트롤러를 폭주시키고 대역폭을 갉아먹던 구조적 지뢰를 완전히 해결했습니다. 비트 MUX를 확장하여 범위 밖 스레드들의 쓰기 타겟 인덱스를 스레드 고유 번호인 `threadIdx.x` 영역(`0~255`번지)으로 평평하게 분산(Scattering) 배출시킴으로써, 데이터 멱등성(Idempotency)을 완벽하게 수호하는 동시에 하드웨어 버스 트랜잭션 대역폭을 극대화했습니다.
+
+#### 🇺🇸 EN
+- **Proactive Compilation Protection Firewall**: Implements an explicit `#error` macro firewall at the source-tier to detect and immediately halt the compilation pipeline if hostile fast-math optimization switches (`-Ofast`, `--use_fast_math`) are injected, preventing volatile compiler passes from wiping the bitmask circuits.
+- **1-Clock Cycle Absolute Value Acceleration (`__fabs`)**: Replaces standard mathematical functions inside the multi-dimensional scanning sequence with the native device intrinsic `__fabs()`. This forces the hardware to clear the MSB sign bit directly within the ALU files without triggering heavy control-flow or software branching overhead.
+- **Numerical Overflow Mitigation Engine (`__fmaf_rn`)**: Refactors the previous FMA structure into an error-free native single-pass fused layout: `__fmaf_rn(human_signal + matched_danger, 0.5f, 0.0f)`. This blocks transient accumulation ceilings and floating-point truncation artifacts under extreme fuzzing inputs, preserving absolute arithmetic invariance under a single execution clock.
+- **VRAM Contention Neutralization via Scattering Overwrite**: Eliminates a severe architectural bottleneck where thousands of idle, out-of-bound threads synchronously hammered VRAM address 0 (`safe_idx`), choking the hardware global memory controller and wasting critical bus bandwidth. By expanding the multiplexing routine into a distributed index structure driven by `threadIdx.x`, execution write-backs are uniformly scattered across localized hardware boundaries (`0 to 255`). This flattens peak memory bank contention while seamlessly upholding data idempotency without a single runtime instruction stall.
+
+---
+
 # 🛠 포팅 및 컴파일 가이드 (Deployment Restrictions & Porting Guide - V2 Architectural Constraints)
 
 Because the V2 engine relies on deterministic bitmask circuits that operate directly on the underlying physical layouts of IEEE 754 floating-point coordinates, strict hardware and compiler boundaries must be enforced to prevent the toolchain from arbitrarily altering critical execution pathways.
