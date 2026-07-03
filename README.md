@@ -69,25 +69,25 @@ Confronted with sophisticated prompt injections or malicious bypass vectors (`Ja
 ## 🇰🇷 KR
 > V2 업데이트는 입력을 고차원 공간 상의 벡터로 취급하고, 이를 시스템 평형 준위선인 **안전 공간(Nominal Safe Space)**과 적대적 격리 구역인 **비정상 공간(Anomalous Space)**으로 물리 분리하여 가드레일 효율을 극대화합니다.
 
-### 🎯 1. 무분기 오차 최소화 및 최적 궤적 좌표 포획 (Branchless Distance Minimization & Coordinate Trapping)
+# 🎯 1. 무분기 오차 최소화 및 최적 궤적 좌표 포획 (Branchless Distance Minimization & Coordinate Trapping)
 
 적대적 인젝션을 식별하기 위해, 시스템은 입력 벡터($x_{\text{signal}}$)와 글로벌 주소선에서 읽어온 위험 가치관 매트릭스 좌표($d_{\text{coord}}$) 사이의 거리를 단 하나의 `if` 조건문 없이 계산하여 하드웨어 파이프라인의 점프 지연을 원천 봉쇄합니다.
 
-연산 장치(ALU)는 상호 배제적 부호 비트 마스크($M_{\text{diff}}$)를 활용하여 실시간으로 최단 거리 변수($\Delta_{\text{min}}$)를 갱신하고, 이에 적중한 가장 인접한 위험 물리 좌표($d_{\text{matched}}$)를 원자적으로 레지스터에 포획합니다.
+연산 장치(ALU)는 단 1클럭 만에 부동소수점의 최상위 부호 비트(MSB)를 소거하는 하드웨어 인트린직($\mathcal{F}_{\text{fabs}}$)을 통해 실시간 이격 거리($\Delta_{\text{current}}$)를 산출합니다. 이후 상호 배제적 부호 비트 마스크($M_{\text{diff}}$)를 활용하여 최단 거리 변수($\Delta_{\text{min}}$)와 가장 인접한 위험 물리 좌표($d_{\text{matched}}$)를 분기 없이 레지스터 파일에 동기 포획합니다.
 
-*   **실시간 이격 거리 측정 (Real-Time Distance Delta)**:
+### 🛠️ 하드웨어 가속 이격 거리 측정 (Device-Native Distance Delta)
+$$\Delta_{\text{current}} = \mathcal{F}_{\text{fabs}}(x_{\text{signal}} - d_{\text{coord}})$$
 
-$$
-\Delta_{\text{current}} = |x_{\text{signal}} - d_{\text{coord}}|
-$$
+### 🔢 2의 보수 기반 무분기 MUX 마스크 생성 (Two's Complement Branchless MUX Mask Formulation)
+조건문 결과에 따른 하드웨어 언더플로우 비트 트릭을 구현합니다.
+* **C++ 구현체:** `-static_cast<int32_t>(current_diff < min_diff)`
 
-*   **2의 보수 기반 무분기 MUX 마스크 생성 (Two's Complement Branchless MUX Mask Formulation)**:
+$$M_{\text{diff}} = \begin{cases} \text{0xFFFFFFFF} & (\Delta_{\text{current}} < \Delta_{\text{min}}) \\ \text{0x00000000} & (\Delta_{\text{current}} \ge \Delta_{\text{min}}) \end{cases}$$
 
-조건문 결과에 따른 언더플로우 유도 공식을 정밀 구현합니다. (C++ 레벨 코드 구현체: `-static_cast<int32_t>(delta_current < delta_min)`)
-
-$$
-M_{\text{diff}} = \begin{cases} \text{0xFFFFFFFF} & \text{(True)} \\ \text{0x00000000} & \text{(False)} \end{cases}
-$$
+### 🎛️ 레지스터 레벨 비트 MUX 합성 공식 (Register-Level Bitwise MUX Synthesis)
+물리 이동 오버헤드가 제로인 비트 스와핑을 통해 최솟값 변수와 타겟 좌표 레지스터를 원자적으로 동시 갱신합니다.
+$$\Delta_{\text{min}} = (\Delta_{\text{current}} \ \text{AND} \ M_{\text{diff}}) \ \text{OR} \ (\Delta_{\text{min}} \ \text{AND} \ \sim M_{\text{diff}})$$
+$$d_{\text{matched}} = (d_{\text{coord}} \ \text{AND} \ M_{\text{diff}}) \ \text{OR} \ (d_{\text{matched}} \ \text{AND} \ \sim M_{\text{diff}})$$
 
 
 ---
@@ -95,25 +95,26 @@ $$
 ## 🇺🇸 EN
 To identify malicious or deceptive inputs, the core evaluates the spatial divergence from the input scalar ($x_{\text{signal}}$) to known hazard matrix elements ($d_{\text{coord}}$) using a 100% branch-free routing routine, eliminating explicit conditional `if` paths to prevent hardware instruction pipeline stalls.
 
-The arithmetic logic unit (ALU) generates a mutually exclusive bitwise mask ($M_{\text{diff}}$) to dynamically update the absolute minimum distance ($\Delta_{\text{min}}$) while synchronously trapping the closest target danger coordinate ($d_{\text{matched}}$) straight into the physical register file:
+The arithmetic logic unit (ALU) extracts the absolute coordinate distance ($\Delta_{\text{current}}$) via a dedicated device intrinsic ($\mathcal{F}_{\text{fabs}}$) that clears the floating-point MSB sign-bit within a single clock cycle. The ALU then generates a mutually exclusive bitwise mask ($M_{\text{diff}}$) to dynamically update the absolute minimum distance ($\Delta_{\text{min}}$) while synchronously trapping the closest target danger coordinate ($d_{\text{matched}}$) straight into the physical register file without any branching overhead.
 
-*   **Real-Time Coordinate Distance Delta**:
+### 🛠️ Device-Native Distance Delta
+$$\Delta_{\text{current}} = \mathcal{F}_{\text{fabs}}(x_{\text{signal}} - d_{\text{coord}})$$
 
-$$
-\Delta_{\text{current}} = |x_{\text{signal}} - d_{\text{coord}}|
-$$
+### 🔢 Two's Complement Branchless MUX Mask Formulation
+Defines the deterministic mask generation formula based on the underflow bit trick.
+* **C++ Implementation:** `-static_cast<int32_t>(current_diff < min_diff)`
 
-*   **Two's Complement Branchless MUX Mask Formulation**:
-Defines the deterministic mask generation formula based on the underflow bit trick. (C++ level implementation: `-static_cast<int32_t>(delta_current < delta_min)`)
+$$M_{\text{diff}} = \begin{cases} \text{0xFFFFFFFF} & (\Delta_{\text{current}} < \Delta_{\text{min}}) \\ \text{0x00000000} & (\Delta_{\text{current}} \ge \Delta_{\text{min}}) \end{cases}$$
 
-$$
-M_{\text{diff}} = \begin{cases} \text{0xFFFFFFFF} & \text{(True)} \\ \text{0x00000000} & \text{(False)} \end{cases}
-$$
+### 🎛️ Register-Level Bitwise MUX Synthesis
+Updates the minimal tracking metrics and the target spatial coordinate atomically utilizing zero-overhead register bit-reinterpretation layers.
+$$\Delta_{\text{min}} = (\Delta_{\text{current}} \ \text{AND} \ M_{\text{diff}}) \ \text{OR} \ (\Delta_{\text{min}} \ \text{AND} \ \sim M_{\text{diff}})$$
+$$d_{\text{matched}} = (d_{\text{coord}} \ \text{AND} \ M_{\text{diff}}) \ \text{OR} \ (d_{\text{matched}} \ \text{AND} \ \sim M_{\text{diff}})$$
 
 
 ---
 
-### 🎯 2. 고도화된 하드웨어 FMA 완충 회로 (Advanced FMA Numerical Mitigation Circuit)
+# 🎯 2. 고도화된 하드웨어 FMA 완충 회로 (Advanced FMA Numerical Mitigation Circuit)
 
 #### 🇰🇷 KR
 위험 좌표가 매트릭스 공간 상에서 탐지 및 국소화되면, 시스템은 비차단형 하드웨어 **FMA (Fused Multiply-Add)** 회로를 가동하여 유입된 적대적 입력 신호를 안전 범위로 부드럽게 완충(Cushioning)합니다. 단순한 단순 가산 후 스케일링 곱셈 대신, 시스템은 하드웨어 연산 장치(FPU) 파이프라인에 다음 수식을 직접 직결합니다.
@@ -135,6 +136,51 @@ $$
 
 This structural technique guarantees that transient intermediate computational layers—which typically break boundary ceilings in naive implementations like $(A+B) \times 0.5\text{f}$—never exceed **IEEE 754** single-precision capacities. Operating under a single, unified execution clock cycle inside the floating-point unit, it thoroughly blocks downstream infinity propagation, providing deterministic arithmetic stability under high-load adversarial fuzzing scenarios.
 
+
+---
+
+# 🎯 3. 메모리 경합 소거 및 인덱스 분산 저장 (Scattering Overwrite)
+
+#### 🇰🇷 KR
+
+유효 처리 경계선 범위 밖(`idx >= vector_size`)의 유휴 스레드들이 단일 주소선(VRAM 0번지)을 타격하여 글로벌 메모리 제어기를 마비시키고 트래픽 폭주(Bus Contention)를 유발하던 하드웨어 병목을 완전히 격리합니다.
+
+시스템은 상호 배제적 주소 경계 마스크($M_{\text{boundary}}$)를 유도하여 유효 범위를 벗어난 스레드의 최종 쓰기 타겟 물리 주소를 단일 공간이 아닌, 스트리밍 멀티프로세서(SM) 내 코어 캐시 라인 크기 내에 부합하는 스레드 고유 하드웨어 번호(`threadIdx.x`) 영역으로 선형 분산(Scattering) 배출합니다.
+
+이를 통해 불필요한 트랜잭션 충돌을 원천 차단하고 하드웨어 버스 단에서 최적화된 병합 저장(Coalesced Store) 파이프라인을 유도하여 데이터 멱등성(Idempotency)과 전역 메모리 대역폭을 동시에 사수합니다.
+
+### 🔌 주소 경계 제어 전압 마스크 생성 (Boundary Control Mask Formulation)
+* **C++ 레벨 코드 구현체:** `uintptr_t boundary_mask = -static_cast<intptr_t>(idx >= vector_size);`
+
+$$M_{\text{boundary}} = \begin{cases} \text{0xFFFFFFFF} & (\text{idx} \ge \mathit{vector\_size}) \\ \text{0x00000000} & (\text{idx} < \mathit{vector\_size}) \end{cases}$$
+
+
+### 🎛️ 하드웨어 인덱스 분산 MUX 수식 (Hardware-Level Address Scattering MUX)
+* **C++ 레벨 코드 구현체:** `size_t final_write_idx = (safe_idx & ~boundary_mask) | ((size_t)threadIdx.x & boundary_mask);`
+
+$$\text{idx}_{\text{final}} = (\text{idx}_{\text{safe}} \ \text{AND} \ \sim M_{\text{boundary}}) \ \text{OR} \ (\text{threadIdx.x} \ \text{AND} \ M_{\text{boundary}})$$
+
+---
+
+#### 🇺🇸 EN
+
+This module completely isolates severe hardware bottlenecks where out-of-bound, idle execution pipelines (`idx >= vector_size`) synchronously hammer a singular global memory junction (VRAM Address 0), choking the hardware memory controller and degrading runtime bandwidth performance.
+
+By constructing a mutually exclusive boundary regulation mask (`M_boundary`), the architecture reroutes the finalized physical writeback address lines of edge threads away from a clustered target and flattens them across localized, unique register positions dictated by native hardware coordinates (`threadIdx.x`).
+
+This design thoroughly eradicates severe peak memory bank contention, guiding the memory controller to execute highly efficient Coalesced Store transactions. Consequently, peak bus saturation drops to zero while maintaining absolute data idempotency without a single control-flow serialize-wait penalty.
+
+
+### 🔌 Boundary Control Mask Formulation
+* **C++ Level Implementation:** `uintptr_t boundary_mask = -static_cast<intptr_t>(idx >= vector_size);`
+
+$$M_{\text{boundary}} = \begin{cases} \text{0xFFFFFFFF} & (\text{idx} \ge \mathit{vector\_size}) \\ \text{0x00000000} & (\text{idx} < \mathit{vector\_size}) \end{cases}$$
+
+
+### 🎛️ Hardware-Level Address Scattering MUX
+* **C++ Level Implementation:** `size_t final_write_idx = (safe_idx & ~boundary_mask) | ((size_t)threadIdx.x & boundary_mask);`
+
+$$\text{idx}_{\text{final}} = (\text{idx}_{\text{safe}} \ \text{AND} \ \sim M_{\text{boundary}}) \ \text{OR} \ (\text{threadIdx.x} \ \text{AND} \ M_{\text{boundary}})$$
 
 ---
 
