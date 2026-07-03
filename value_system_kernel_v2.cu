@@ -132,7 +132,7 @@ __global__ void value_system_pure_branchless_kernel_v2(
     float emotion_weight,
     bool is_exhausted
 ) {
-       // ============================================================================
+        // ============================================================================
     // 🎛️ 64-BIT HARDWARE ADDRESS INDEXING & BOUNDARY PROTECTION (주소 계산 및 경계 보호)
     // ============================================================================
     // [KR] 64비트 주소 경계선 체크용 무분기 통짜 비트 마스크 생성 (if문 전면 도살)
@@ -158,7 +158,10 @@ __global__ void value_system_pure_branchless_kernel_v2(
     // [KR] 지수부가 전부 1이고 가수부가 0이 아닌 경우 NaN 비트 패턴 판정 (단락 평가 원천 박멸)
     // [EN] Determines NaN bit pattern if Exponent bits are all 1 and Mantissa is non-zero (Short-circuit eradication)
     uint32_t is_nan = (((raw_bits & 0x7F800000U) == 0x7F800000U) & ((raw_bits & 0x007FFFFFU) != 0U));
-    uint32_t nan_mask = -static_cast<int32_t>(is_nan); // [KR] 0x00000000 또는 0xFFFFFFFF 마스크 생성 [EN] Generates 0x00000000 or 0xFFFFFFFF mask
+    
+    // [KR] 명시적 형변환 구조를 유지하여 하드웨어 부호 확장(Sign Extension)을 물리적으로 강제 유도
+    // [EN] Preserves explicit casting structures to physically enforce hardware sign extension mechanisms
+    uint32_t nan_mask = -static_cast<int32_t>(is_nan); 
     
     // [KR] NaN 신호일 경우 비트 AND 연산으로 원점 준위(0.0f) 비트 패턴으로 즉각 증발 처리
     // [EN] If NaN signal, vaporizes the pattern instantly to baseline equilibrium (0.0f) bit layout via bitwise AND
